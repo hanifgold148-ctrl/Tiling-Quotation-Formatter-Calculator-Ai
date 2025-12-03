@@ -312,9 +312,10 @@ const AuthenticatedApp: React.FC<AuthenticatedAppProps> = ({ currentUser, onLogo
             await db.saveQuotation(linkedQuote);
         }
 
-      } catch (error) {
+      } catch (error: any) {
           console.error(error);
-          alert("Failed to generate quotation. Please try again.");
+          // Show the actual error message to the user (e.g. "API Key missing")
+          alert(error.message || "Failed to generate quotation. Please try again.");
       }
   };
 

@@ -9,7 +9,7 @@ function getAiClient(): GoogleGenAI {
     if (aiInstance) {
         return aiInstance;
     }
-    const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+    const API_KEY = process.env.API_KEY;
     if (!API_KEY) {
         // This error will now be thrown when an AI feature is used, not on app load.
         throw new Error("Google Gemini API Key is missing. Please ensure it is configured correctly.");
@@ -302,10 +302,18 @@ export const generateQuotationFromAI = async (inputText: string, settings: Setti
             },
         });
         
-        // Use cleanup logic to remove potential markdown fences which cause JSON.parse to fail
         let jsonText = response.text ? response.text.trim() : '{}';
-        // Remove ```json and ``` if they exist
-        jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        
+        // Robust cleanup: Find the first '{' and the last '}' to handle potential extra text
+        const firstBrace = jsonText.indexOf('{');
+        const lastBrace = jsonText.lastIndexOf('}');
+        
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+            jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+        } else {
+            // Fallback for simple markdown stripping if braces aren't clear
+             jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        }
         
         const parsedData = JSON.parse(jsonText);
         

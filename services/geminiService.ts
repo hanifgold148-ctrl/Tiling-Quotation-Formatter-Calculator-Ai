@@ -9,7 +9,7 @@ function getAiClient(): GoogleGenAI {
     if (aiInstance) {
         return aiInstance;
     }
-    const API_KEY = process.env.API_KEY;
+    const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
     if (!API_KEY) {
         // This error will now be thrown when an AI feature is used, not on app load.
         throw new Error("Google Gemini API Key is missing. Please ensure it is configured correctly.");

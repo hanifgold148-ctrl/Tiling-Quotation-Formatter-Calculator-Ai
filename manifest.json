@@ -1,0 +1,21 @@
+{
+  "short_name": "Hanifgold AI",
+  "name": "Hanifgold Tiling Quotation AI",
+  "description": "An AI-powered tool for professional tilers to convert rough notes or OCR text into a complete, clean, and professional tiling quotation.",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0F172A",
+  "background_color": "#F8FAFC"
+}

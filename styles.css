@@ -1,0 +1,84 @@
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Accessible Focus */
+*:focus-visible {
+    outline: 2px solid #EAB308;
+    outline-offset: 2px;
+}
+
+/* Realistic Paper Document */
+.paper-sheet {
+    background-color: #ffffff;
+    /* Realistic paper shadow */
+    box-shadow: 
+        0 1px 1px rgba(0,0,0,0.05), 
+        0 2px 2px rgba(0,0,0,0.05), 
+        0 4px 4px rgba(0,0,0,0.05), 
+        0 8px 8px rgba(0,0,0,0.05),
+        0 16px 16px rgba(0,0,0,0.05);
+    margin: 0 auto;
+    width: 100%;
+    max-width: 210mm; /* A4 width */
+    min-height: 297mm; /* A4 height */
+    position: relative;
+    z-index: 10;
+}
+
+.dark .paper-sheet {
+    background-color: #ffffff; /* Keep it white for preview accuracy */
+    filter: brightness(0.95);
+}
+
+/* Inputs */
+input, textarea, select {
+    transition: all 0.2s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+    border-color: #EAB308;
+    box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.15);
+}
+
+/* Utility Classes */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.dark .glass-panel {
+    background: rgba(30, 41, 59, 0.85);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Animation */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.4s ease-out forwards;
+}

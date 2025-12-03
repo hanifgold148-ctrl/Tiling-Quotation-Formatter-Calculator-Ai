@@ -1,0 +1,8 @@
+{
+  "name": "Copy of Tiling Quotation Formatter & Calculator AI",
+  "description": "An AI-powered tool for professional tilers to convert rough notes or OCR text into a complete, clean, and professional tiling quotation. It automatically extracts details, applies defaults for missing information, performs all necessary calculations, and generates a print-ready quotation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

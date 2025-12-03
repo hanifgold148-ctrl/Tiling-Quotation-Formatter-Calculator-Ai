@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F8FAFC" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Tiling Quotation AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- jsPDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- jsPDF autotable plugin -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <!-- XLSX (SheetJS) for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- docx for Word Export -->
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+    <!-- FileSaver.js for saving docx and other files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- JSZip for creating zip files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- React Image Crop CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/react-image-crop/dist/ReactCrop.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              serif: ['Playfair Display', 'serif'],
+            },
+            colors: {
+              // Modern Gold Palette
+              'gold': '#EAB308',        // Yellow 500 - Brighter Gold
+              'gold-dark': '#CA8A04',   // Yellow 600
+              'gold-light': '#FEF9C3',  // Yellow 100
+              'gold-lightest': '#FEFCE8', // Yellow 50
+              
+              // Clean Neutral Palette
+              'brand-dark': '#1E293B', // Slate 800
+              'brand-light': '#F8FAFC', // Slate 50
+              'surface-light': '#FFFFFF',
+              'surface-dark': '#0F172A', // Slate 900
+              'border-color': '#E2E8F0', // Slate 200
+              'border-dark': '#334155', // Slate 700
+              
+              // Status Colors
+              'success': '#10B981',      // Emerald 500
+              'danger': '#EF4444',       // Red 500
+              'warning': '#F59E0B',      // Amber 500
+              'info': '#3B82F6',         // Blue 500
+            },
+            boxShadow: {
+              'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+              'card': '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)',
+              'paper': '0 10px 30px -10px rgba(0, 0, 0, 0.15)',
+            }
+          },
+        },
+      }
+    </script>
+    <script>
+      // Flicker prevention script for dark mode
+      if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    </script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "react-image-crop": "https://aistudiocdn.com/react-image-crop@^11.0.10",
+    "vite": "https://aistudiocdn.com/vite@^7.2.4",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1"
+  }
+}
+</script>
+</head>
+  <body class="bg-brand-light dark:bg-brand-dark text-slate-700 dark:text-slate-200 antialiased">
+    <div id="root"></div>
+    <!-- QR Code Generator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.3/qrcode.min.js"></script>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

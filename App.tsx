@@ -1,10 +1,13 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { QuotationData, ClientDetails, Material, Tile, Settings, InvoiceData, ChecklistItem, Client, Expense, Adjustment } from './types';
+
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { QuotationData, ClientDetails, Settings, InvoiceData, Client, Expense, User, JournalEntry } from './types';
 import { generateQuotationFromAI, getTextFromImageAI } from './services/geminiService';
+import { supabase } from './services/supabaseClient';
+import * as db from './services/dbService';
 import InputSection from './components/InputSection';
 import QuotationDisplay from './components/QuotationDisplay';
 import ImageCropper from './components/ImageCropper';
-import { HanifgoldLogoIcon, GenerateIcon, SettingsIcon, SunIcon, MoonIcon, DashboardIcon, ClientsIcon, HistoryIcon, InvoiceIcon, ExpenseIcon, PlusIcon } from './components/icons';
+import { HanifgoldLogoIcon, GenerateIcon, SettingsIcon, SunIcon, MoonIcon, DashboardIcon, ClientsIcon, HistoryIcon, InvoiceIcon, ExpenseIcon, PlusIcon, NotebookIcon } from './components/icons';
 import ClientDetailsForm from './components/ClientDetailsForm';
 import LoadingSpinner from './components/LoadingSpinner';
 import AddMaterialModal from './components/AddMaterialModal';
@@ -16,9 +19,11 @@ import History from './components/History';
 import Invoices from './components/Invoices';
 import Clients from './components/Clients';
 import Expenses from './components/Expenses';
+import Journal from './components/Journal';
 import ExpenseModal from './components/ExpenseModal';
 import ClientModal from './components/ClientModal';
 import SettingsModal from './components/SettingsModal';
+import JournalModal from './components/JournalModal';
 import BottomNav from './components/BottomNav';
 import VoiceAssistantModal from './components/VoiceAssistantModal';
 import InvoiceModal from './components/InvoiceModal';
@@ -27,25 +32,8 @@ import BulkSuccessModal from './components/BulkSuccessModal';
 import { DEFAULT_SETTINGS } from './constants';
 import { exportQuotesToZip } from './services/exportService';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
+import Auth from './components/Auth';
 
-
-const QUOTATIONS_KEY = 'tilingAiQuotations';
-const INVOICES_KEY = 'tilingAiInvoices';
-const CLIENTS_KEY = 'tilingAiClients';
-const EXPENSES_KEY = 'tilingAiExpenses';
-const SETTINGS_KEY = 'tilingAiSettings';
-const PWA_PROMPT_DISMISSED_KEY = 'pwaPromptDismissed';
-const THEME_KEY = 'theme';
-
-
-interface BeforeInstallPromptEvent extends Event {
-  readonly platforms: Array<string>;
-  readonly userChoice: Promise<{
-    outcome: 'accepted' | 'dismissed',
-    platform: string
-  }>;
-  prompt(): Promise<void>;
-}
 
 // Custom hook for managing state with undo/redo capabilities
 const useHistoryState = <T,>(initialState: T) => {
@@ -113,135 +101,67 @@ const useHistoryState = <T,>(initialState: T) => {
 };
 
 
-const App: React.FC = () => {
-  const [view, setView] = useState<'generator' | 'dashboard' | 'history' | 'invoices' | 'clients' | 'expenses'>('dashboard');
+interface AuthenticatedAppProps {
+    currentUser: User;
+    onLogout: () => void;
+    theme: 'light' | 'dark';
+    setTheme: React.Dispatch<React.SetStateAction<'light' | 'dark'>>;
+}
+
+interface BeforeInstallPromptEvent extends Event {
+  readonly platforms: Array<string>;
+  readonly userChoice: Promise<{
+    outcome: 'accepted' | 'dismissed',
+    platform: string
+  }>;
+  prompt(): Promise<void>;
+}
+
+const AuthenticatedApp: React.FC<AuthenticatedAppProps> = ({ currentUser, onLogout, theme, setTheme }) => {
+  const [view, setView] = useState<'generator' | 'dashboard' | 'history' | 'invoices' | 'clients' | 'expenses' | 'journal'>('dashboard');
   const { state: jobNotes, set: setJobNotes, undo: undoJobNotes, redo: redoJobNotes, canUndo: canUndoJobNotes, canRedo: canRedoJobNotes, reset: resetJobNotes } = useHistoryState<string[]>([]);
   const [quotationData, setQuotationData] = useState<QuotationData | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const savedTheme = localStorage.getItem(THEME_KEY);
-    if (savedTheme) return savedTheme as 'light' | 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
-
   
-  const [settings, setSettings] = useState<Settings>(() => {
-      try {
-        const savedSettings = localStorage.getItem(SETTINGS_KEY);
-        return savedSettings ? { ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) } : DEFAULT_SETTINGS;
-      } catch (error) {
-        console.error('Failed to parse settings from localStorage', error);
-        return DEFAULT_SETTINGS;
-      }
-  });
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   
-  const [allQuotations, setAllQuotations] = useState<QuotationData[]>(() => {
-    try {
-      const savedQuotations = localStorage.getItem(QUOTATIONS_KEY);
-      const parsedQuotations = savedQuotations ? JSON.parse(savedQuotations) : [];
-      
-      if (!Array.isArray(parsedQuotations)) return [];
+  const [allQuotations, setAllQuotations] = useState<QuotationData[]>([]);
+  const [allInvoices, setAllInvoices] = useState<InvoiceData[]>([]);
+  const [allClients, setAllClients] = useState<Client[]>([]);
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+  const [allJournalEntries, setAllJournalEntries] = useState<JournalEntry[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState(true);
 
-      // Migration for new properties with strict safety checks
-      return parsedQuotations.map((q: any) => {
-          if (!q || typeof q !== 'object') return null;
-          return {
-            ...q,
-            status: q.status || 'Pending',
-            invoiceId: q.invoiceId || undefined,
-            isBulkGenerated: q.isBulkGenerated || false,
-            checklist: Array.isArray(q.checklist) ? q.checklist : [],
-            adjustments: Array.isArray(q.adjustments) ? q.adjustments : [],
-            depositPercentage: q.depositPercentage ?? null,
-            showMaterials: q.showMaterials ?? true,
-            showAdjustments: q.showAdjustments ?? true,
-            showBankDetails: q.showBankDetails ?? true,
-            showTerms: q.showTerms ?? settings.showTermsAndConditions,
-            showWorkmanship: q.showWorkmanship ?? true,
-            showMaintenance: q.showMaintenance ?? settings.showMaintenance,
-            showTax: q.showTax ?? settings.showTax,
-            showCostSummary: q.showCostSummary ?? true,
-            clientDetails: {
-                ...(q.clientDetails || {}),
-                showClientName: q.clientDetails?.showClientName ?? true,
-                showClientAddress: q.clientDetails?.showClientAddress ?? true,
-                showClientPhone: q.clientDetails?.showClientPhone ?? true,
-                showProjectName: q.clientDetails?.showProjectName ?? true,
-                clientId: q.clientDetails?.clientId,
-            }
-          };
-      }).filter((q: any) => q !== null);
-    } catch (error) {
-      console.error('Failed to parse quotations from localStorage', error);
-      return [];
-    }
-  });
-
-   const [allInvoices, setAllInvoices] = useState<InvoiceData[]>(() => {
-    try {
-        const savedInvoices = localStorage.getItem(INVOICES_KEY);
-        const parsed = savedInvoices ? JSON.parse(savedInvoices) : [];
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-        console.error('Failed to parse invoices from localStorage', error);
-        return [];
-    }
-  });
-  
-  const [allClients, setAllClients] = useState<Client[]>(() => {
-    try {
-        const savedClients = localStorage.getItem(CLIENTS_KEY);
-        const parsed = savedClients ? JSON.parse(savedClients) : [];
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-        console.error('Failed to parse clients from localStorage', error);
-        return [];
-    }
-  });
-  
-  const [allExpenses, setAllExpenses] = useState<Expense[]>(() => {
-    try {
-        const savedExpenses = localStorage.getItem(EXPENSES_KEY);
-        const parsed = savedExpenses ? JSON.parse(savedExpenses) : [];
-        return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-        console.error('Failed to parse expenses from localStorage', error);
-        return [];
-    }
-  });
-
+  // Initial Data Fetch from Supabase
+  useEffect(() => {
+      const loadData = async () => {
+          setIsDataLoading(true);
+          try {
+              const [fetchedSettings, fetchedQuotes, fetchedInvoices, fetchedClients, fetchedExpenses, fetchedJournal] = await Promise.all([
+                  db.fetchSettings(),
+                  db.fetchQuotations(),
+                  db.fetchInvoices(),
+                  db.fetchClients(),
+                  db.fetchExpenses(),
+                  db.fetchJournalEntries()
+              ]);
+              
+              if (fetchedSettings) setSettings({ ...DEFAULT_SETTINGS, ...fetchedSettings });
+              setAllQuotations(fetchedQuotes || []);
+              setAllInvoices(fetchedInvoices || []);
+              setAllClients(fetchedClients || []);
+              setAllExpenses(fetchedExpenses || []);
+              setAllJournalEntries(fetchedJournal || []);
+          } catch (error) {
+              console.error("Failed to load data from Supabase", error);
+              // Fallback or error state handling could go here
+          } finally {
+              setIsDataLoading(false);
+          }
+      };
+      loadData();
+  }, []);
 
   const [historyFilterIds, setHistoryFilterIds] = useState<string[] | null>(null);
-
-  useEffect(() => {
-    localStorage.setItem(QUOTATIONS_KEY, JSON.stringify(allQuotations));
-  }, [allQuotations]);
-
-  useEffect(() => {
-    localStorage.setItem(INVOICES_KEY, JSON.stringify(allInvoices));
-  }, [allInvoices]);
-  
-  useEffect(() => {
-    localStorage.setItem(CLIENTS_KEY, JSON.stringify(allClients));
-  }, [allClients]);
-
-  useEffect(() => {
-    localStorage.setItem(EXPENSES_KEY, JSON.stringify(allExpenses));
-  }, [allExpenses]);
-  
-  useEffect(() => {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  }, [settings]);
-  
-  useEffect(() => {
-    const root = window.document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    localStorage.setItem(THEME_KEY, theme);
-  }, [theme]);
-
 
   // Modals State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -253,6 +173,8 @@ const App: React.FC = () => {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
+  const [editingJournalEntry, setEditingJournalEntry] = useState<JournalEntry | null>(null);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceData | null>(null);
@@ -269,7 +191,7 @@ const App: React.FC = () => {
     const handler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
-      const isDismissed = localStorage.getItem(PWA_PROMPT_DISMISSED_KEY);
+      const isDismissed = localStorage.getItem('pwaPromptDismissed');
       if (!isDismissed) {
         setShowInstallPrompt(true);
       }
@@ -290,7 +212,7 @@ const App: React.FC = () => {
 
   const handleDismissInstall = () => {
     setShowInstallPrompt(false);
-    localStorage.setItem(PWA_PROMPT_DISMISSED_KEY, 'true');
+    localStorage.setItem('pwaPromptDismissed', 'true');
   };
 
   // Form State
@@ -311,27 +233,43 @@ const App: React.FC = () => {
   const [showCropper, setShowCropper] = useState(false);
   const [isOcrLoading, setIsOcrLoading] = useState(false);
 
-  // Generator Logic
+  // Handlers wrapped to update state AND Supabase
+  
+  const handleUpdateSettings = async (newSettings: Settings) => {
+      setSettings(newSettings);
+      try {
+          await db.saveSettings(newSettings);
+      } catch (e) {
+          console.error("Failed to save settings", e);
+      }
+  };
+
+  const handleQuotationUpdate = async (updatedQuotation: QuotationData) => {
+      setQuotationData(updatedQuotation);
+      setAllQuotations(prev => prev.map(q => q.id === updatedQuotation.id ? updatedQuotation : q));
+      try {
+          await db.saveQuotation(updatedQuotation);
+      } catch (e) {
+          console.error("Failed to update quotation in DB", e);
+      }
+  };
+
   const handleGenerate = async () => {
       if (jobNotes.length === 0) {
           alert("Please add at least one note or upload an image.");
           return;
       }
       
-      setQuotationData(null); // Clear previous result
+      setQuotationData(null);
 
       try {
         const textInput = jobNotes.join('\n');
-        
-        // Ensure client details are passed if available, or extracted from text
         const combinedInput = `
             Client Name: ${clientDetails.clientName}
             Client Address: ${clientDetails.clientAddress}
             Client Phone: ${clientDetails.clientPhone}
             Project Name: ${clientDetails.projectName}
-            
-            Job Notes:
-            ${textInput}
+            Job Notes: ${textInput}
         `;
 
         const data = await generateQuotationFromAI(combinedInput, settings, settings.addCheckmateDefault, settings.showChecklistDefault);
@@ -343,7 +281,6 @@ const App: React.FC = () => {
             ...data,
             clientDetails: {
                 ...data.clientDetails,
-                // Preserve toggle states from form if not explicitly overridden by AI logic (AI usually just returns strings)
                 showClientName: clientDetails.showClientName,
                 showClientAddress: clientDetails.showClientAddress,
                 showClientPhone: clientDetails.showClientPhone,
@@ -356,8 +293,9 @@ const App: React.FC = () => {
 
         setQuotationData(newQuotation);
         setAllQuotations(prev => [newQuotation, ...prev]);
+        await db.saveQuotation(newQuotation);
         
-        // Auto-save client if checked and not already saved
+        // Auto-save client if checked
         if (saveClientInfo && newQuotation.clientDetails.clientName && !newQuotation.clientDetails.clientId) {
             const newClient: Client = {
                 id: crypto.randomUUID(),
@@ -366,13 +304,17 @@ const App: React.FC = () => {
                 phone: newQuotation.clientDetails.clientPhone,
             };
             setAllClients(prev => [...prev, newClient]);
-            // Update the current quotation to link to this new client
-             setQuotationData(prev => prev ? ({ ...prev, clientDetails: { ...prev.clientDetails, clientId: newClient.id } }) : null);
+            await db.saveClient(newClient);
+            // Link client to quote
+            const linkedQuote = { ...newQuotation, clientDetails: { ...newQuotation.clientDetails, clientId: newClient.id } };
+            setQuotationData(linkedQuote);
+            setAllQuotations(prev => prev.map(q => q.id === linkedQuote.id ? linkedQuote : q));
+            await db.saveQuotation(linkedQuote);
         }
 
       } catch (error) {
           console.error(error);
-          alert("Failed to generate quotation. Please check your API key or try again.");
+          alert("Failed to generate quotation. Please try again.");
       }
   };
 
@@ -392,7 +334,7 @@ const App: React.FC = () => {
       try {
           const text = await getTextFromImageAI(croppedFile);
           setJobNotes(prev => [...prev, ...text.split('\n').filter(line => line.trim() !== '')]);
-          setSelectedImage(URL.createObjectURL(croppedFile)); // Show cropped preview
+          setSelectedImage(URL.createObjectURL(croppedFile));
       } catch (error) {
           console.error(error);
           alert("Failed to extract text from image.");
@@ -412,65 +354,60 @@ const App: React.FC = () => {
       const backupData = {
           version: 1,
           date: new Date().toISOString(),
+          user: currentUser.email,
           quotations: allQuotations,
           invoices: allInvoices,
           clients: allClients,
           expenses: allExpenses,
+          journal: allJournalEntries,
           settings: settings
       };
       const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Hanifgold_Backup_${new Date().toISOString().split('T')[0]}.json`;
+      a.download = `Hanifgold_Backup_${new Date().toISOString().split('T')[0]}_${currentUser.name.replace(/\s+/g,'_')}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
   };
 
+  // Note: Restore is complicated with Cloud DB. We might just append or overwrite locally then sync.
+  // For simplicity, we'll keep it local alert for now or implement full restore logic.
   const handleRestore = (file: File) => {
+      alert("Restore functionality is limited when using cloud sync. Data will be merged.");
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
           try {
               const data = JSON.parse(e.target?.result as string);
-              // Basic validation
-              if (typeof data !== 'object' || data === null) throw new Error("Invalid file format");
-              
-              if (data.quotations && Array.isArray(data.quotations)) setAllQuotations(data.quotations);
-              if (data.invoices && Array.isArray(data.invoices)) setAllInvoices(data.invoices);
-              if (data.clients && Array.isArray(data.clients)) setAllClients(data.clients);
-              if (data.expenses && Array.isArray(data.expenses)) setAllExpenses(data.expenses);
-              if (data.settings) setSettings({ ...DEFAULT_SETTINGS, ...data.settings });
-              
-              alert('Data restored successfully!');
+              // Here we would ideally loop through and upsert all to supabase
+              if (data.quotations) {
+                  for (const q of data.quotations) await db.saveQuotation(q);
+                  setAllQuotations(await db.fetchQuotations());
+              }
+              // ... same for others
+              alert('Data restore initiated. Please refresh to see changes.');
           } catch (err) {
               console.error(err);
-              alert('Failed to restore data. The file may be corrupted or invalid.');
+              alert('Failed to restore data.');
           }
       };
       reader.readAsText(file);
-  };
-
-
-  // Other Handlers
-  const handleQuotationUpdate = (updatedQuotation: QuotationData) => {
-      setQuotationData(updatedQuotation);
-      setAllQuotations(prev => prev.map(q => q.id === updatedQuotation.id ? updatedQuotation : q));
   };
   
   const handleViewQuotation = (id: string) => {
       const quote = allQuotations.find(q => q.id === id);
       if (quote) {
           setQuotationData(quote);
-          setClientDetails(quote.clientDetails); // Populate form for context
-          setJobNotes([]); // Clear notes to avoid confusion
-          resetJobNotes([]); // Reset undo history
+          setClientDetails(quote.clientDetails); 
+          setJobNotes([]); 
+          resetJobNotes([]); 
           setView('generator');
       }
   };
   
-  const handleDuplicateQuotation = (id: string) => {
+  const handleDuplicateQuotation = async (id: string) => {
       const quote = allQuotations.find(q => q.id === id);
       if (quote) {
           const newQuote = { 
@@ -482,20 +419,22 @@ const App: React.FC = () => {
               clientDetails: { ...quote.clientDetails, projectName: `${quote.clientDetails.projectName} (Copy)` }
           };
           setAllQuotations(prev => [newQuote, ...prev]);
+          await db.saveQuotation(newQuote);
           alert("Quotation duplicated successfully.");
       }
   };
 
-  const handleDeleteQuotation = (id: string) => {
+  const handleDeleteQuotation = async (id: string) => {
       if (window.confirm("Are you sure you want to delete this quotation?")) {
         setAllQuotations(prev => prev.filter(q => q.id !== id));
         if (quotationData?.id === id) {
             setQuotationData(null);
         }
+        await db.deleteQuotation(id);
       }
   };
 
-  const handleConvertToInvoice = (id: string) => {
+  const handleConvertToInvoice = async (id: string) => {
       const quote = allQuotations.find(q => q.id === id);
       if (!quote) return;
       if (quote.invoiceId) {
@@ -503,17 +442,12 @@ const App: React.FC = () => {
           return;
       }
 
-      // Generate unique sequential invoice number
       const prefix = settings.invoicePrefix || 'INV';
       const year = new Date().getFullYear();
       let nextSequence = 1;
-      
-      // Escape prefix for regex safety
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Match pattern: PREFIX-YEAR-NUMBER
       const pattern = new RegExp(`^${escapedPrefix}-${year}-(\\d+)`);
 
-      // Find the highest existing sequence number for this year/prefix
       allInvoices.forEach(inv => {
           const match = inv.invoiceNumber.match(pattern);
           if (match) {
@@ -524,10 +458,7 @@ const App: React.FC = () => {
           }
       });
 
-      // Generate the new number, e.g., INV-2024-0001
       let newInvoiceNumber = `${prefix}-${year}-${String(nextSequence).padStart(4, '0')}`;
-
-      // Final safety check against collisions (e.g. if someone manually named an invoice oddly)
       while (allInvoices.some(inv => inv.invoiceNumber === newInvoiceNumber)) {
           nextSequence++;
           newInvoiceNumber = `${prefix}-${year}-${String(nextSequence).padStart(4, '0')}`;
@@ -538,7 +469,7 @@ const App: React.FC = () => {
           quotationId: quote.id,
           invoiceNumber: newInvoiceNumber,
           invoiceDate: Date.now(),
-          dueDate: Date.now() + (7 * 24 * 60 * 60 * 1000), // +7 days default
+          dueDate: Date.now() + (7 * 24 * 60 * 60 * 1000),
           status: 'Unpaid',
           clientDetails: quote.clientDetails,
           tiles: quote.tiles,
@@ -554,7 +485,8 @@ const App: React.FC = () => {
       };
       
       setAllInvoices(prev => [newInvoice, ...prev]);
-      // Update quotation status
+      await db.saveInvoice(newInvoice);
+
       const updatedQuote = { ...quote, status: 'Invoiced' as const, invoiceId: newInvoice.id };
       handleQuotationUpdate(updatedQuote);
       
@@ -564,54 +496,85 @@ const App: React.FC = () => {
   };
   
   // Client Management
-  const handleSaveClient = (client: Client) => {
+  const handleSaveClient = async (client: Client) => {
+      const clientToSave = client.id ? client : { ...client, id: crypto.randomUUID() };
+      
       if (client.id) {
-          setAllClients(prev => prev.map(c => c.id === client.id ? client : c));
+          setAllClients(prev => prev.map(c => c.id === client.id ? clientToSave : c));
       } else {
-          setAllClients(prev => [...prev, { ...client, id: crypto.randomUUID() }]);
+          setAllClients(prev => [...prev, clientToSave]);
       }
+      await db.saveClient(clientToSave);
       setIsClientModalOpen(false);
       setEditingClient(null);
   };
   
-  const handleDeleteClient = (id: string) => {
-      if (window.confirm("Delete this client? Quotations linked to this client will remain but lose the link.")) {
+  const handleDeleteClient = async (id: string) => {
+      if (window.confirm("Delete this client?")) {
           setAllClients(prev => prev.filter(c => c.id !== id));
+          await db.deleteClient(id);
       }
   };
 
   // Expense Management
-  const handleSaveExpense = (expense: Expense) => {
+  const handleSaveExpense = async (expense: Expense) => {
+      const expenseToSave = expense.id ? expense : { ...expense, id: crypto.randomUUID() };
       if (expense.id) {
-          setAllExpenses(prev => prev.map(e => e.id === expense.id ? expense : e));
+          setAllExpenses(prev => prev.map(e => e.id === expense.id ? expenseToSave : e));
       } else {
-          setAllExpenses(prev => [...prev, { ...expense, id: crypto.randomUUID() }]);
+          setAllExpenses(prev => [...prev, expenseToSave]);
       }
+      await db.saveExpense(expenseToSave);
       setIsExpenseModalOpen(false);
       setEditingExpense(null);
   };
   
-  const handleDeleteExpense = (id: string) => {
+  const handleDeleteExpense = async (id: string) => {
       if (window.confirm("Delete this expense record?")) {
           setAllExpenses(prev => prev.filter(e => e.id !== id));
+          await db.deleteExpense(id);
+      }
+  };
+
+  // Journal Management
+  const handleSaveJournalEntry = async (entry: JournalEntry) => {
+      const entryToSave = entry.id ? entry : { ...entry, id: crypto.randomUUID() };
+      if (entry.id) {
+          setAllJournalEntries(prev => prev.map(e => e.id === entry.id ? entryToSave : e));
+      } else {
+          setAllJournalEntries(prev => [entryToSave, ...prev]);
+      }
+      await db.saveJournalEntry(entryToSave);
+      setIsJournalModalOpen(false);
+      setEditingJournalEntry(null);
+  };
+
+  const handleDeleteJournalEntry = async (id: string) => {
+      if (window.confirm("Delete this diary entry?")) {
+          setAllJournalEntries(prev => prev.filter(e => e.id !== id));
+          await db.deleteJournalEntry(id);
       }
   };
   
   // Invoice Management
-  const handleSaveInvoice = (invoice: InvoiceData) => {
+  const handleSaveInvoice = async (invoice: InvoiceData) => {
       setAllInvoices(prev => prev.map(i => i.id === invoice.id ? invoice : i));
+      await db.saveInvoice(invoice);
       setIsInvoiceModalOpen(false);
       setEditingInvoice(null);
   };
   
-  const handleDeleteInvoice = (id: string) => {
-      if (window.confirm("Delete this invoice? The linked quotation will revert to Accepted status.")) {
+  const handleDeleteInvoice = async (id: string) => {
+      if (window.confirm("Delete this invoice?")) {
           const inv = allInvoices.find(i => i.id === id);
           setAllInvoices(prev => prev.filter(i => i.id !== id));
+          await db.deleteInvoice(id);
           if (inv && inv.quotationId) {
               const quote = allQuotations.find(q => q.id === inv.quotationId);
               if (quote) {
-                  handleQuotationUpdate({ ...quote, status: 'Accepted', invoiceId: undefined });
+                  const updated = { ...quote, status: 'Accepted' as const, invoiceId: undefined };
+                  setAllQuotations(prev => prev.map(q => q.id === updated.id ? updated : q));
+                  await db.saveQuotation(updated);
               }
           }
       }
@@ -621,15 +584,14 @@ const App: React.FC = () => {
   const handleVoiceCommand = (command: string) => {
       const cmd = command.toLowerCase();
       setIsVoiceModalOpen(false);
-      
       if (cmd.includes('dashboard')) setView('dashboard');
       else if (cmd.includes('history')) setView('history');
       else if (cmd.includes('invoices')) setView('invoices');
       else if (cmd.includes('clients')) setView('clients');
       else if (cmd.includes('expenses')) setView('expenses');
+      else if (cmd.includes('diary') || cmd.includes('journal')) setView('journal');
       else if (cmd.includes('create quotation') || cmd.includes('generator')) setView('generator');
       else if (cmd.includes('add note') && view === 'generator') {
-          // This is tricky without context, usually speech-to-text fills the input
           setJobNotes(prev => [...prev, cmd.replace('add note', '').trim()]);
       }
   };
@@ -668,9 +630,7 @@ const App: React.FC = () => {
                 Client Address: ${task.client.clientAddress}
                 Client Phone: ${task.client.clientPhone}
                 Project Name: ${task.client.projectName}
-                
-                Job Notes:
-                ${task.text}
+                Job Notes: ${task.text}
               `;
               
               const aiData = await generateQuotationFromAI(combinedInput, settings, settings.addCheckmateDefault, settings.showChecklistDefault);
@@ -682,7 +642,6 @@ const App: React.FC = () => {
                   isBulkGenerated: true,
                   clientDetails: {
                        ...aiData.clientDetails,
-                       // Ensure display toggles from CSV/Input are respected if they exist in task.client, else default true
                        showClientName: true, 
                        showClientAddress: true,
                        showClientPhone: true,
@@ -693,10 +652,10 @@ const App: React.FC = () => {
               };
               
               generated.push(newQuote);
+              await db.saveQuotation(newQuote);
               
           } catch (e) {
               console.error(`Failed to generate for ${task.client.clientName}`, e);
-              // Continue to next task even if one fails
           }
       }
       
@@ -720,11 +679,19 @@ const App: React.FC = () => {
       }
   };
 
+  if (isDataLoading) {
+      return (
+          <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+              <LoadingSpinner />
+          </div>
+      )
+  }
+
   // Main Render
   return (
     <div className="flex h-screen bg-[#f3f4f6] dark:bg-[#0a0f1c] text-slate-700 dark:text-slate-200 font-sans overflow-hidden">
       
-      {/* New Floating Sidebar Layout */}
+      {/* Sidebar */}
       <aside className="hidden md:flex flex-col w-24 hover:w-64 bg-white dark:bg-[#151e32] border-r-0 m-4 rounded-3xl h-[calc(100vh-2rem)] flex-shrink-0 shadow-2xl z-30 transition-all duration-300 ease-in-out overflow-hidden group">
         
         {/* Sidebar Header */}
@@ -733,7 +700,7 @@ const App: React.FC = () => {
               <HanifgoldLogoIcon className="w-8 h-8" />
            </div>
            <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-              <span className="font-bold text-lg text-brand-dark dark:text-white leading-tight block">Hanifgold</span>
+              <span className="font-bold text-lg text-brand-dark dark:text-white leading-tight block font-display">Hanifgold</span>
            </div>
         </div>
         
@@ -743,6 +710,7 @@ const App: React.FC = () => {
             { name: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
             { name: 'generator', label: 'Generator', icon: GenerateIcon },
             { name: 'clients', label: 'Clients', icon: ClientsIcon },
+            { name: 'journal', label: 'Site Diary', icon: NotebookIcon },
             { name: 'history', label: 'History', icon: HistoryIcon },
             { name: 'invoices', label: 'Invoices', icon: InvoiceIcon },
             { name: 'expenses', label: 'Expenses', icon: ExpenseIcon },
@@ -790,6 +758,18 @@ const App: React.FC = () => {
                 </div>
                 <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300">Settings</span>
            </button>
+           
+           <button 
+                onClick={onLogout}
+                className="w-full flex items-center gap-4 px-3 py-3 rounded-2xl text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors whitespace-nowrap"
+            >
+                <div className="flex-shrink-0 flex items-center justify-center w-8">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                </div>
+                <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300">Log Out</span>
+           </button>
         </div>
       </aside>
 
@@ -801,39 +781,35 @@ const App: React.FC = () => {
              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-3">
                     <HanifgoldLogoIcon className="w-8 h-8" />
-                    <span className="font-bold text-brand-dark dark:text-white">Hanifgold</span>
+                    <span className="font-bold text-brand-dark dark:text-white font-display">Hanifgold</span>
                 </div>
              </div>
              <div className="flex items-center gap-4">
-                 <div className="h-9 w-9 rounded-full bg-gold-light text-gold-dark border border-gold/20 flex items-center justify-center text-sm font-bold shadow-sm">
-                     HG
-                 </div>
+                 <button onClick={onLogout} className="h-9 w-9 rounded-full bg-gold-light text-gold-dark border border-gold/20 flex items-center justify-center text-sm font-bold shadow-sm" title="Log Out">
+                     {currentUser.name.substring(0,2).toUpperCase()}
+                 </button>
              </div>
         </header>
 
-        {/* Main Scrollable Content - Rounded container on Desktop */}
+        {/* Main Scrollable Content */}
         <main className="flex-1 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0f172a] md:rounded-3xl shadow-xl md:border border-white/20 dark:border-slate-700 relative">
              
-             {/* Top Bar inside the rounded container */}
+             {/* Top Bar */}
              <div className="sticky top-0 z-20 px-6 py-4 bg-white/90 dark:bg-[#0f172a]/90 backdrop-blur-md border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                  <div>
-                    <h2 className="text-xl font-bold text-brand-dark dark:text-white capitalize tracking-tight">
-                        {view === 'generator' ? 'Quotation Generator' : view.charAt(0).toUpperCase() + view.slice(1)}
+                    <h2 className="text-xl font-bold text-brand-dark dark:text-white capitalize tracking-tight font-display">
+                        {view === 'generator' ? 'Quotation Generator' : view === 'journal' ? 'Site Diary' : view.charAt(0).toUpperCase() + view.slice(1)}
                     </h2>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Welcome back, Admin</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Welcome back, {currentUser.name}</p>
                  </div>
                  <div className="hidden md:flex items-center gap-3">
-                      <button className="w-10 h-10 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center hover:bg-gray-200 transition">
-                          <span className="w-2 h-2 bg-red-500 rounded-full absolute top-3 right-3 border border-white"></span>
-                          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                      </button>
                       <div className="h-10 w-10 rounded-full bg-gradient-to-br from-gold to-amber-600 text-white flex items-center justify-center text-sm font-bold shadow-md">
-                         HG
+                         {currentUser.name.substring(0,2).toUpperCase()}
                       </div>
                  </div>
              </div>
 
-             <div className="p-4 md:p-8 max-w-[1600px] mx-auto">
+             <div className="p-4 md:p-8 max-w-[1600px] mx-auto h-full">
                 {view === 'dashboard' && <Dashboard quotations={allQuotations} invoices={allInvoices} expenses={allExpenses} settings={settings} />}
                 
                 {view === 'generator' && (
@@ -973,6 +949,15 @@ const App: React.FC = () => {
                         onDelete={handleDeleteExpense}
                     />
                 )}
+
+                {view === 'journal' && (
+                    <Journal 
+                        entries={allJournalEntries}
+                        onAdd={() => { setEditingJournalEntry(null); setIsJournalModalOpen(true); }}
+                        onEdit={(entry) => { setEditingJournalEntry(entry); setIsJournalModalOpen(true); }}
+                        onDelete={handleDeleteJournalEntry}
+                    />
+                )}
              </div>
         </main>
 
@@ -984,12 +969,12 @@ const App: React.FC = () => {
       {/* PWA Install Prompt */}
       {showInstallPrompt && <PWAInstallPrompt onInstall={handleInstallClick} onDismiss={handleDismissInstall} />}
 
-      {/* Modals - Z-Index boosted for reliability */}
+      {/* Modals */}
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         settings={settings} 
-        onSave={setSettings} 
+        onSave={handleUpdateSettings} 
         onBackup={handleBackup}
         onRestore={handleRestore}
       />
@@ -1052,6 +1037,13 @@ const App: React.FC = () => {
         onSave={handleSaveClient}
         clientToEdit={editingClient}
       />
+
+      <JournalModal 
+        isOpen={isJournalModalOpen}
+        onClose={() => setIsJournalModalOpen(false)}
+        onSave={handleSaveJournalEntry}
+        entryToEdit={editingJournalEntry}
+      />
       
       <VoiceAssistantModal 
         isOpen={isVoiceModalOpen}
@@ -1093,6 +1085,103 @@ const App: React.FC = () => {
         />
       )}
     </div>
+  );
+};
+
+
+const THEME_KEY = 'theme';
+
+const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme) return savedTheme as 'light' | 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    let mounted = true;
+
+    // Check active Supabase session
+    const getSession = async () => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (mounted) {
+                if (session?.user) {
+                    setCurrentUser({
+                        id: session.user.id,
+                        email: session.user.email!,
+                        name: session.user.user_metadata.full_name || 'User'
+                    });
+                } else {
+                    setCurrentUser(null);
+                }
+            }
+        } catch (e) {
+            console.error("Auth check failed", e);
+        } finally {
+            if (mounted) setIsLoading(false);
+        }
+    };
+    getSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+            setCurrentUser({
+                id: session.user.id,
+                email: session.user.email!,
+                name: session.user.user_metadata.full_name || 'User'
+            });
+        } else {
+            setCurrentUser(null);
+        }
+        // Ensure loading is off if a change event occurs
+        setIsLoading(false);
+    });
+
+    return () => {
+        mounted = false;
+        subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <Auth />; // Auth component handles login
+  }
+
+  return (
+    <AuthenticatedApp 
+      key={currentUser.id} 
+      currentUser={currentUser} 
+      onLogout={handleLogout}
+      theme={theme}
+      setTheme={setTheme}
+    />
   );
 };
 

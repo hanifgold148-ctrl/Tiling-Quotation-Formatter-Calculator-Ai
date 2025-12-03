@@ -1,4 +1,5 @@
 
+
 export interface Adjustment {
   description: string;
   amount: number;
@@ -60,6 +61,8 @@ export interface QuotationData {
   // This field is for user-provided terms and will be populated by the AI
   termsAndConditions?: string;
   invoiceId?: string;
+  invoiceNumber?: string;
+  dueDate?: number;
   isBulkGenerated?: boolean;
   checklist?: ChecklistItem[];
   addCheckmate?: boolean;
@@ -106,6 +109,14 @@ export interface Expense {
   description: string;
   amount: number;
   quotationId?: string; // Optional link to a project
+}
+
+export interface JournalEntry {
+  id: string;
+  title: string;
+  content: string;
+  date: number; // timestamp
+  created_at?: string;
 }
 
 
@@ -196,4 +207,13 @@ export interface Settings {
   defaultInvoiceNotes: string;
   paymentUrl: string;
   showQRCode: boolean;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  // In a real app, never store passwords plain text. 
+  // For this local-only demo, we simulate auth storage.
+  password?: string; 
 }

@@ -49,7 +49,7 @@ export const getTextFromImageAI = async (imageFile: File): Promise<string> => {
                 { text: "Extract all text from this image of handwritten or printed notes for a tiling job. Present the text clearly." }
             ]},
         });
-        return response.text.trim();
+        return response.text ? response.text.trim() : "";
     } catch (error) {
         console.error("Error calling Gemini Vision API:", error);
         throw new Error("Failed to extract text from the image.");
@@ -302,7 +302,11 @@ export const generateQuotationFromAI = async (inputText: string, settings: Setti
             },
         });
         
-        const jsonText = response.text.trim();
+        // Use cleanup logic to remove potential markdown fences which cause JSON.parse to fail
+        let jsonText = response.text ? response.text.trim() : '{}';
+        // Remove ```json and ``` if they exist
+        jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+        
         const parsedData = JSON.parse(jsonText);
         
         // Inject new visibility defaults based on settings
@@ -316,9 +320,13 @@ export const generateQuotationFromAI = async (inputText: string, settings: Setti
             showCostSummary: true,
         };
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error calling Gemini API:", error);
-        throw new Error("Failed to parse quotation data from AI response.");
+        // Throw specific error messages for UI handling
+        if (error.message.includes("API Key is missing")) {
+            throw error;
+        }
+        throw new Error("Failed to parse quotation data from AI response. Please check your input or try again.");
     }
 };
 
@@ -354,7 +362,7 @@ export const getAiSummaryForTts = async (quotation: QuotationData, grandTotal: n
             model: "gemini-2.5-flash",
             contents: prompt,
         });
-        return response.text.trim();
+        return response.text ? response.text.trim() : "Summary not available.";
     } catch (error) {
         console.error("Error calling Gemini for TTS summary:", error);
         throw new Error("Failed to generate audio summary.");
